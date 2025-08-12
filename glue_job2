@@ -1,0 +1,27 @@
+import sys
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from awsglue.utils import getResolvedOptions
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
+args = getResolvedOptions(sys.argv, ["clean_path", "agg_path"])
+clean_path, agg_path = args["clean_path"], args["agg_path"]
+
+glueContext = GlueContext(SparkContext.getOrCreate())
+spark = glueContext.spark_session
+
+df = spark.read.parquet(clean_path)
+
+# Floor to 5-min window
+df = df.withColumn("window_start",
+                   F.window(F.col("timestamp"), "5 minutes").getField("start"))
+
+agg = (df.groupBy("window_start")
+         .agg(F.avg("temperature").alias("avg_temperature"),
+              F.avg("humidity").alias("avg_humidity"))
+         .orderBy("window_start"))
+
+# Write Parquet & CSV
+(agg.write.mode("overwrite").parquet(agg_path + "parquet/"))
+(agg.write.mode("overwrite").option("header","true").csv(agg_path + "csv/"))
