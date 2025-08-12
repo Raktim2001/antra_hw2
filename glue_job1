@@ -1,0 +1,33 @@
+import sys
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from awsglue.utils import getResolvedOptions
+from pyspark.sql import functions as F
+from pyspark.sql.types import TimestampType, DoubleType
+
+args = getResolvedOptions(sys.argv, ["raw_path", "clean_path"])
+raw_path, clean_path = args["raw_path"], args["clean_path"]
+
+glueContext = GlueContext(SparkContext.getOrCreate())
+spark = glueContext.spark_session
+
+df = spark.read.option("header", "true").csv(raw_path)
+
+# Parse and basic clean
+df = (df
+      .withColumn("timestamp", F.to_timestamp("timestamp"))
+      .withColumn("temperature", F.col("temperature").cast(DoubleType()))
+      .withColumn("humidity", F.col("humidity").cast(DoubleType()))
+     )
+
+# Drop nulls, bad timestamps, and duplicates on (timestamp)
+df = df.dropna(subset=["timestamp","temperature","humidity"]).dropDuplicates(["timestamp"])
+
+# Optional sanity bounds
+df = df.filter((F.col("temperature") > -60) & (F.col("temperature") < 80))
+df = df.filter((F.col("humidity") >= 0) & (F.col("humidity") <= 100))
+
+(df.write
+ .mode("overwrite")
+ .format("parquet")
+ .save(clean_path))
